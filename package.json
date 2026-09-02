@@ -1,0 +1,35 @@
+{
+  "name": "food-ordering",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "test": "vitest",
+    "cf-typegen": "wrangler types",
+    "build": "vite build",
+    "vite": "vite"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.0.0",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "typescript": "^5.5.2",
+    "vitest": "~4.1.0",
+    "wrangler": "^4.128.0"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "^4.0.93",
+    "@cloudflare/ai-chat": "^0.11.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "agents": "^0.22.0",
+    "ai": "^7.0.90",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "workers-ai-provider": "^4.0.0",
+    "zod": "^4.5.4"
+  }
+}
