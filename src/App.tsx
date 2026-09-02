@@ -3,12 +3,49 @@ import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 
 export default function App() {
-    // 1. 백엔드의 FoodOrderingAgent Durable Object 인스턴스에 연결합니다 [12, 13].
     const agent = useAgent({ agent: "FoodOrderingAgent" });
 
-    // 2. 실시간 채팅에 필요한 메시지 리스트, 전송 함수, 상태 등을 훅으로 간편하게 가져옵니다 [12, 13].
-    const { messages, sendMessage, status, error } = useAgentChat({ agent });
-    console.log({ messages, status, error })
+    const { messages, sendMessage, status, addToolOutput } = useAgentChat({
+        agent,
+        // 🌟 [핵심] 클라이언트 전용 도구가 실행될 때 호출되는 콜백 함수
+        onToolCall: async ({ toolCall, addToolOutput }) => {
+            console.log("🖥️ [프론트] 백엔드로부터 도구 호출 요청을 받음:", toolCall);
+
+            // 도구 이름이 'getLocation'일 때 실제 브라우저 위치 정보를 가져옵니다
+            if (toolCall.toolName === "getLocation") {
+                try {
+                    // 브라우저의 비동기 Geolocation API를 Promise로 래핑하여 호출합니다
+                    const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject);
+                    });
+
+                    const coords = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                    };
+
+                    console.log("🖥️ [프론트] 사용자의 위치 좌표 수집 성공:", coords);
+
+                    // 🌟 수집한 데이터를 addToolOutput을 사용하여 백엔드 에이전트(LLM)에 돌려줍니다 [5, 6, 9]
+                    addToolOutput({
+                        toolCallId: toolCall.toolCallId,
+                        output: {
+                            ...coords,
+                            message: "위치 수집에 성공하였습니다."
+                        }
+                    });
+                } catch (error) {
+                    console.error("🖥️ [프론트] 위치 권한 에러:", error);
+
+                    // 에러가 났을 때도 에이전트가 흐름을 이어갈 수 있도록 에러 피드백을 전달합니다 [10, 11]
+                    addToolOutput({
+                        toolCallId: toolCall.toolCallId,
+                        output: { error: "사용자가 위치 수집 권한을 거부했거나 오류가 발생했습니다." }
+                    });
+                }
+            }
+        }
+    });
 
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -16,7 +53,6 @@ export default function App() {
         const input = form.elements.namedItem("input") as HTMLInputElement;
         if (!input.value.trim()) return;
 
-        // 에이전트로 사용자의 입력을 전송합니다 [12].
         sendMessage({ text: input.value });
         input.value = "";
     };
@@ -27,14 +63,13 @@ export default function App() {
 
             {/* 실시간 메시지 로그 */}
             <div style={{ height: "400px", overflowY: "auto", border: "1px solid #ddd", borderRadius: "8px", padding: "15px", marginBottom: "15px", backgroundColor: "#f9f9f9" }}>
-                {messages.map((msg: any) => (
+                {messages.map((msg) => (
                     <div key={msg.id} style={{ margin: "12px 0", textAlign: msg.role === "user" ? "right" : "left" }}>
                         <strong style={{ color: msg.role === "user" ? "#0070f3" : "#333" }}>
                             {msg.role === "user" ? "나" : "비서(Claw)"}:
                         </strong>
                         <div style={{ display: "inline-block", backgroundColor: msg.role === "user" ? "#e1f5fe" : "#fff", padding: "8px 12px", borderRadius: "12px", border: "1px solid #eee", marginTop: "4px" }}>
-                            {/* 메시지 파트 중 텍스트 타입만 렌더링합니다 [12] */}
-                            {msg.parts.map((part: any, i: any) =>
+                            {msg.parts.map((part, i) =>
                                 part.type === "text" ? <span key={i}>{part.text}</span> : null
                             )}
                         </div>
@@ -46,9 +81,9 @@ export default function App() {
             <form onSubmit={handleSubmit} style={{ display: "flex", gap: "10px" }}>
                 <input
                     name="input"
-                    placeholder="메뉴를 물어보세요! (예: 안녕? 피자 주문하고 싶어)"
+                    placeholder="타코 하나 담아주고, 배달해줘!"
                     style={{ flex: 1, padding: "10px", borderRadius: "4px", border: "1px solid #ccc" }}
-                    disabled={status !== "ready"} // 전송 중이거나 스트리밍 중일 때는 임시로 입력을 막습니다 [12].
+                    disabled={status !== "ready"}
                 />
                 <button
                     type="submit"

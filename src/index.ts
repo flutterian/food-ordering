@@ -65,7 +65,14 @@ export class FoodOrderingAgent extends AIChatAgent {
 						console.log("🛠️ [서버 실행 로그] viewCart 실행됨:", cart);
 						return { cart, totalItems: cart.length };
 					},
-				})
+				}),
+
+				// 🌟 4. [새롭게 추가] 브라우저(클라이언트) 전용 GPS 도구
+				// execute 구현부가 절대 들어가지 않습니다!
+				getLocation: tool({
+					description: "사용자의 브라우저 GPS 센서를 활용해 현재 실시간 위치(위도, 경도)를 수집합니다.",
+					inputSchema: z.object({}),
+				}),
 			}
 		});
 
