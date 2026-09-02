@@ -5,33 +5,45 @@ import { streamText, convertToModelMessages, tool, isLoopFinished } from "ai";
 import { z } from 'zod';
 
 export class FoodOrderingAgent extends AIChatAgent {
-	// 🌟 Durable Object의 Storage를 사용하여 세션이 끊기거나 재시작되어도 카트가 유지되도록 변경합니다 [6, 7].
 
-	// 백엔드 AI 모델 호출 및 스트리밍 처리
+	// 🌟 [과제 요구사항] 대화가 SQLite DB에 영구 저장되기 전에 카드 번호를 마스킹 처리합니다 [1, 5].
+	protected override sanitizeMessageForPersistence(message: any) {
+		return {
+			...message,
+			parts: message.parts.map((part: any) => {
+				if (part.type === "text") {
+					// 13~16자리의 신용카드 번호 형태의 숫자 패턴을 [REDACTED]로 치환합니다 [2].
+					const maskedText = part.text.replace(/\b(?:\d[ -]*?){13,16}\b/g, "[REDACTED]");
+					return { ...part, text: maskedText };
+				}
+				return part;
+			}),
+		};
+	}
+
 	async onChatMessage() {
 		const workersai = createWorkersAI({ binding: this.env.AI });
 
 		const result = streamText({
 			model: workersai("@cf/zai-org/glm-4.7-flash"),
-			// 🌟 LLM이 도구 사용 후 답변을 제대로 마무리할 수 있도록 구체적인 지침을 줍니다.
 			system: `당신은 친절한 음식 주문 비서 "Claw"입니다. 사용자가 피자, 타코, 비빔밥을 주문할 수 있도록 도와주세요.
-사용자가 메뉴를 보여달라고 하면 'getMenu'를 호출하고, 장바구니에 담아달라고 하면 'addToCart'를, 장바구니를 보고 싶어 하면 'viewCart' 도구를 실행하세요.
-도구 실행 결과(예: 장바구니 내역)를 획득하면, 그 결과 데이터(음식명, 수량 등)를 사용자에게 친절하게 요약하여 실시간 말로 풀어서 대답을 마무리 지으세요.`,
+다음과 같은 단계로 작업을 정밀하게 조율해야 합니다:
+1. 사용자가 메뉴를 물어보면 'getMenu'를 호출해 보여줍니다.
+2. 주문하고 싶은 음식을 말하면 'addToCart'를 사용해 장바구니에 차곡차곡 누적합니다.
+3. 배달 위치를 지정하기 위해 'getLocation'을 호출하여 사용자의 브라우저 GPS 정보를 수집합니다.
+4. 장바구니 목록과 최종 배달 정보가 모두 정리되면 'viewCart'를 실행하여 총액을 파악하고, 마지막으로 결제 승인을 얻기 위해 'placeOrder' 도구를 최종 실행하세요.`,
 			messages: await convertToModelMessages(this.messages),
-
-			// 🌟 도구 결과 처리 후 다음 답변 단계까지 매끄럽게 이어서 실행하도록 지정합니다 [3, 4].
-			stopWhen: isLoopFinished(),
-
 			// @ts-ignore
 			maxSteps: 5,
+			stopWhen: isLoopFinished(), // 🌟 도구 루프가 완전히 끝날 때까지 회전 [6, 7]
 
 			tools: {
 				// 1. 기존 메뉴 확인 도구
 				getMenu: tool({
 					description: "주문 가능한 전체 음식 메뉴 목록과 가격 정보를 가져옵니다.",
-					inputSchema: z.object({}), // 🌟 parameters -> inputSchema로 변경하여 프레임워크가 인식하도록 교정 [1]
+					inputSchema: z.object({}),
 					execute: async () => {
-						console.log("🛠️ [서버 실행 로그] getMenu 실행됨");
+						console.log("🛠️ [서버] getMenu 실행됨");
 						return { menu: ["라지 페퍼로니 피자 (18,000원)", "치즈 피자 (15,000원)", "타코 (12,000원)", "비빔밥 (10,000원)", "애호박 전 (4,000원)"] };
 					},
 				}),
@@ -40,18 +52,14 @@ export class FoodOrderingAgent extends AIChatAgent {
 				addToCart: tool({
 					description: "사용자가 선택한 메뉴를 장바구니에 담습니다.",
 					inputSchema: z.object({
-						// 🌟 .optional()을 빼서 LLM이 사용자의 질문으로부터 확실히 메뉴 단어를 추출하게 만듭니다.
 						item: z.string().describe("장바구니에 담을 구체적인 메뉴 이름"),
-					}), // 🌟 inputSchema 설정으로 as any 우회 제거 성공 [1]
+					}),
 					execute: async ({ item }) => {
-						// SQLite DO Storage에서 카트 로드 [1, 7]
 						const cart = (await this.ctx.storage.get<string[]>("cart")) || [];
 						cart.push(item);
-						// 안전하게 영구 업데이트 [1, 7]
 						await this.ctx.storage.put("cart", cart);
 
-						console.log(`🛠️ [서버] addToCart 실행 (담은 메뉴: ${item})`);
-						console.log(`🛒 [현재 장바구니]:`, cart);
+						console.log(`🛠️ [서버] addToCart 실행: ${item}`);
 						return { success: true, message: `${item}이(가) 장바구니에 정상적으로 추가되었습니다.` };
 					},
 				}),
@@ -59,20 +67,33 @@ export class FoodOrderingAgent extends AIChatAgent {
 				// 3. 장바구니 확인 도구
 				viewCart: tool({
 					description: "현재 장바구니에 임시 보관 중인 내역을 가져옵니다.",
-					inputSchema: z.object({}), // 🌟 parameters -> inputSchema로 변경 [1]
+					inputSchema: z.object({}),
 					execute: async () => {
 						const cart = (await this.ctx.storage.get<string[]>("cart")) || [];
-						console.log("🛠️ [서버 실행 로그] viewCart 실행됨:", cart);
+						console.log("🛠️ [서버] viewCart 실행됨:", cart);
 						return { cart, totalItems: cart.length };
 					},
 				}),
 
-				// 🌟 4. [새롭게 추가] 브라우저(클라이언트) 전용 GPS 도구
-				// execute 구현부가 절대 들어가지 않습니다!
+				// 4. 기존 브라우저 GPS 도구 (클라이언트)
 				getLocation: tool({
 					description: "사용자의 브라우저 GPS 센서를 활용해 현재 실시간 위치(위도, 경도)를 수집합니다.",
 					inputSchema: z.object({}),
 				}),
+
+				// 🌟 5. [새롭게 추가] 주문 결제 도구 (Human-in-the-loop 승인 대기형)
+				placeOrder: tool({
+					description: "장바구니 최종 확정 및 결제 처리를 수행하고 주문을 완전히 접수합니다.",
+					inputSchema: z.object({}),
+					// needsApproval이 true를 반환하면 승인 과정을 거치기 전에는 execute를 절대 실행하지 않습니다 [3].
+					needsApproval: async () => true,
+					execute: async () => {
+						// 주문 완료 시 SQLite/DO Storage의 장바구니를 완전히 초기화해 줍니다.
+						await this.ctx.storage.delete("cart");
+						console.log("💳 [서버] 최종 주문 결제 성공 및 카트 비우기 완료");
+						return { success: true, message: "주문이 완전히 접수되었습니다! 맛있는 음식을 곧 보내드릴게요! 🍕" };
+					}
+				})
 			}
 		});
 

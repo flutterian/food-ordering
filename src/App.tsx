@@ -1,46 +1,39 @@
 import React from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
+// 🌟 AI SDK 및 Cloudflare 전용 승인 컴포넌트 헬퍼들을 가져옵니다.
+import { getToolName, isToolUIPart } from "ai";
+import { getToolApproval, getToolCallId, getToolPartState } from "@cloudflare/ai-chat/react";
 
 export default function App() {
     const agent = useAgent({ agent: "FoodOrderingAgent" });
 
-    const { messages, sendMessage, status, addToolOutput } = useAgentChat({
+    const {
+        messages,
+        sendMessage,
+        status,
+        addToolOutput,
+        addToolApprovalResponse // 🌟 최종 결제 승인 신호를 백엔드로 전달하는 함수 [3]
+    } = useAgentChat({
         agent,
-        // 🌟 [핵심] 클라이언트 전용 도구가 실행될 때 호출되는 콜백 함수
         onToolCall: async ({ toolCall, addToolOutput }) => {
-            console.log("🖥️ [프론트] 백엔드로부터 도구 호출 요청을 받음:", toolCall);
-
-            // 도구 이름이 'getLocation'일 때 실제 브라우저 위치 정보를 가져옵니다
             if (toolCall.toolName === "getLocation") {
                 try {
-                    // 브라우저의 비동기 Geolocation API를 Promise로 래핑하여 호출합니다
                     const position = await new Promise<GeolocationPosition>((resolve, reject) => {
                         navigator.geolocation.getCurrentPosition(resolve, reject);
                     });
-
                     const coords = {
                         latitude: position.coords.latitude,
                         longitude: position.coords.longitude,
                     };
-
-                    console.log("🖥️ [프론트] 사용자의 위치 좌표 수집 성공:", coords);
-
-                    // 🌟 수집한 데이터를 addToolOutput을 사용하여 백엔드 에이전트(LLM)에 돌려줍니다 [5, 6, 9]
                     addToolOutput({
                         toolCallId: toolCall.toolCallId,
-                        output: {
-                            ...coords,
-                            message: "위치 수집에 성공하였습니다."
-                        }
+                        output: { ...coords, message: "위치 수집에 성공하였습니다." }
                     });
                 } catch (error) {
-                    console.error("🖥️ [프론트] 위치 권한 에러:", error);
-
-                    // 에러가 났을 때도 에이전트가 흐름을 이어갈 수 있도록 에러 피드백을 전달합니다 [10, 11]
                     addToolOutput({
                         toolCallId: toolCall.toolCallId,
-                        output: { error: "사용자가 위치 수집 권한을 거부했거나 오류가 발생했습니다." }
+                        output: { error: "위치 수집 거부 혹은 획득 실패" }
                     });
                 }
             }
@@ -73,6 +66,36 @@ export default function App() {
                                 part.type === "text" ? <span key={i}>{part.text}</span> : null
                             )}
                         </div>
+
+                        {/* 🌟 [승인 UI 구현] 승인 대기 중인(waiting-approval) 도구 파트가 있다면 승인용 단추 인터페이스를 그립니다 [3]. */}
+                        {msg.parts
+                            .filter((part) => isToolUIPart(part) && getToolPartState(part) === "waiting-approval")
+                            .map((part) => {
+                                const approval = getToolApproval(part);
+                                if (!approval) return null;
+                                return (
+                                    <div key={getToolCallId(part)} style={{ marginTop: "10px", padding: "12px", border: "1px solid #ff9800", borderRadius: "8px", backgroundColor: "#fff3e0", textAlign: "left" }}>
+                                        <p style={{ margin: "0 0 10px 0", fontSize: "14px", fontWeight: "bold", color: "#e65100" }}>
+                                            💳 최종 주문 승인 요청 ({getToolName(part as any)})
+                                        </p>
+                                        <p style={{ fontSize: "13px", margin: "0 0 10px 0" }}>주문 총액과 내역을 확인하셨으면 승인해 주세요.</p>
+                                        <div style={{ display: "flex", gap: "8px" }}>
+                                            <button
+                                                onClick={() => addToolApprovalResponse({ id: approval.id, approved: true })} // 승인 전달
+                                                style={{ padding: "6px 12px", backgroundColor: "#4caf50", color: "#fff", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold" }}
+                                            >
+                                                결제 승인 (Approve)
+                                            </button>
+                                            <button
+                                                onClick={() => addToolApprovalResponse({ id: approval.id, approved: false })} // 거절 전달
+                                                style={{ padding: "6px 12px", backgroundColor: "#f44336", color: "#fff", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold" }}
+                                            >
+                                                거절 (Reject)
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                     </div>
                 ))}
             </div>
@@ -81,7 +104,7 @@ export default function App() {
             <form onSubmit={handleSubmit} style={{ display: "flex", gap: "10px" }}>
                 <input
                     name="input"
-                    placeholder="타코 하나 담아주고, 배달해줘!"
+                    placeholder="페퍼로니 피자 하나 주문할게요."
                     style={{ flex: 1, padding: "10px", borderRadius: "4px", border: "1px solid #ccc" }}
                     disabled={status !== "ready"}
                 />
